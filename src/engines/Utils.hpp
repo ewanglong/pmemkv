@@ -16,18 +16,19 @@
 #define SHARD_NUM 2048
 
 // PMEM_RELATIVE
-#define PMEM_SIZE (256LL * 1024 * 1024 * 1024)
+#define PMEM_SIZE (8LL * 1024 * 1024 * 1024)
 
 #define KEY_SIZE 16
 #define HASH_BUCKET_SIZE 128
 #define HASH_BUCKET_ENTRY_NUM 5
-#define HASH_TOTAL_BUCKETS (1 << 25)
+#define HASH_TOTAL_BUCKETS (1 << 23)
 #define HASH_META_SIZE \
     8  // high | b_off(32) | v_size(16) | b_size(8) | version(8) | low
 #define HASH_ENTRY_SIZE (KEY_SIZE + HASH_META_SIZE)
 
 #define AEP_META_SIZE \
     6  // high | v_size(16) | b_size(8) | version(8) | checksum(16) | low
+#define AEP_GLOBAL_VER 8 //AEP_META_SIZE | AEP_GLOBAL_VER | low
 #define AEP_BLOCK_SIZE 32
 #define AEP_FREE_LIST_SLOT_NUM (1024 / AEP_BLOCK_SIZE + 2)
 #define AEP_MIN_BLOCK_SIZE 4
@@ -36,7 +37,7 @@
 #define DRAM_HASH_SIZE (1LL * HASH_TOTAL_BUCKETS * HASH_BUCKET_SIZE)
 #define DRAM_SPARE_SIZE (1LL * HASH_TOTAL_BUCKETS * HASH_BUCKET_SIZE)
 
-#define THREAD_NUM 16
+#define THREAD_NUM 1
 
 #define SLOT_GRAIN 8
 #define SLOT_NUM (HASH_TOTAL_BUCKETS / SLOT_GRAIN)

@@ -13,6 +13,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <pthread.h>
+#include <signal.h>
 
 #define ASSERT(expr)                                                                     \
 	do {                                                                             \
@@ -24,7 +25,7 @@
 #define LOG(msg) puts(msg)
 #define MAX_KEY_LEN 16
 #define MAX_VAL_LEN 1024
-#define MAX_BEN_ITEM 10000000
+#define MAX_BEN_ITEM 4000000
 #define MAX_INTERVAL_TIMES 10000
 
 static const uint64_t SIZE = 16 * 1024UL * 1024UL * 1024UL;
@@ -44,7 +45,8 @@ typedef struct thread_args {
 } thread_args;
 
 //#define INSTANT_OPS
-static char *valpool;
+//static char *valpool;
+static char valpool[MAX_VAL_LEN * 4];
 static void *thread_ben(void *arg)
 {
 	int s;
@@ -66,7 +68,8 @@ static void *thread_ben(void *arg)
 #endif
 
 	for (int i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
-		snprintf(curkey, sizeof(curkey), "key%12d:", i);
+		//snprintf(curkey, sizeof(curkey), "key%12d:", i);
+		snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
 		s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
 		ASSERT(s == PMEMKV_STATUS_OK);
 #ifdef INSTANT_OPS
@@ -76,7 +79,7 @@ static void *thread_ben(void *arg)
 			cur_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
 			double inst_dt = (double)(cur_us - last_us);
 			double inst_ops = (double)MAX_INTERVAL_TIMES/inst_dt * 1000000.0;
-			printf("Thread #%d WRITE: %.2f ops\n", tn, inst_ops);
+			fprintf(stderr, "Thread #%d WRITE: %.2f ops\n", tn, inst_ops);
 			last_us = cur_us;
 		}
 #endif
@@ -87,14 +90,14 @@ static void *thread_ben(void *arg)
 
 int main(int argc, char *argv[])
 {
-	int ret, i;
+	int ret, i, j;
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s file\n", argv[0]);
 		exit(1);
 	}
 
 	/* See libpmemkv_config(3) for more detailed example of config creation */
-	LOG("Creating config");
+	fprintf(stderr, "Creating config\n");
 	pmemkv_config *cfg = pmemkv_config_new();
 	ASSERT(cfg != NULL);
 
@@ -111,13 +114,11 @@ int main(int argc, char *argv[])
 	s = pmemkv_config_put_force_create(cfg, true);
 	ASSERT(s == PMEMKV_STATUS_OK);
 
-	LOG("Opening pmemkv database with 'fmap' engine");
+	fprintf(stderr, "Opening pmemkv database with 'fmap' engine\n");
 	pmemkv_db *db = NULL;
 	s = pmemkv_open("fmap", cfg, &db);
 	ASSERT(s == PMEMKV_STATUS_OK);
 	ASSERT(db != NULL);
-
-	LOG("Starting benchmarking...: main thread");
 
 	pthread_t *p_threads = malloc(sizeof(pthread_t) * (unsigned int)ts);
 	if (p_threads == NULL) {
@@ -131,7 +132,7 @@ int main(int argc, char *argv[])
 		exit(-1);
 	}
 
-	valpool = malloc(MAX_VAL_LEN * 4);
+	//valpool = malloc(MAX_VAL_LEN * 4);
 	for (int j = 0; j < MAX_VAL_LEN * 4; j++) {
 		valpool[j] = (char)((j+1) % 255);
 	}
@@ -142,27 +143,61 @@ int main(int argc, char *argv[])
 	gettimeofday(&now, NULL);
 	last_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
 
-	for (i = 0; i < ts; i++) {
-		threads_args[i].thread_num = i;
-		threads_args[i].db = db;
-		if ((ret = pthread_create(&p_threads[i], NULL, thread_ben,
-				&threads_args[i])) != 0) {
-			fprintf(stderr, "Cannot start a thread #%d: %s\n",
-				i, strerror(ret));
-			return ret;
+	if (ts > 1) {
+		for (i = 0; i < ts; i++) {
+			threads_args[i].thread_num = i;
+			threads_args[i].db = db;
+			if ((ret = pthread_create(&p_threads[i], NULL, thread_ben,
+					&threads_args[i])) != 0) {
+				fprintf(stderr, "Cannot start a thread #%d: %s\n",
+					i, strerror(ret));
+				return ret;
+			}
+		}
+
+		for (i = ts - 1; i >= 0; i--)
+			pthread_join(p_threads[i], NULL);
+	} else {
+		fprintf(stderr, "Starting benchmarking...: main thread\n");
+
+#ifdef INSTANT_OPS
+		long long cur_inst_us;
+		long long last_inst_us = 0;
+		struct timeval now_inst;
+		gettimeofday(&now_inst, NULL);
+		last_inst_us = (long long)(now_inst.tv_sec * 1000000 + now_inst.tv_usec);
+#endif
+
+		char curkey[MAX_KEY_LEN];
+		char *curval = valpool;
+		for (i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
+			//snprintf(curkey, sizeof(curkey), "key%12d:", i);
+			snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
+
+			s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
+			ASSERT(s == PMEMKV_STATUS_OK);
+#ifdef INSTANT_OPS
+			if (++j % MAX_INTERVAL_TIMES == 0) {
+				//long long cur_us = mstime();
+				gettimeofday(&now_inst, NULL);
+				cur_inst_us = (long long)(now_inst.tv_sec * 1000000 + now_inst.tv_usec);
+				double inst_dt = (double)(cur_inst_us - last_inst_us);
+				double inst_ops = (double)MAX_INTERVAL_TIMES/inst_dt * 1000000.0;
+				fprintf(stderr, "Main Thread WRITE: %.2f ops\n", inst_ops);
+				last_inst_us = cur_inst_us;
+			}
+#endif
 		}
 	}
 
-	for (i = ts - 1; i >= 0; i--)
-		pthread_join(p_threads[i], NULL);
-
 	gettimeofday(&now, NULL);
 	cur_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
-	double inst_dt = (double)(cur_us - last_us);
-	double inst_ops = (double)ts * MAX_BEN_ITEM / inst_dt * 1000000.0;
-	printf("%d threads average WRITE: %.2f ops\n", ts, inst_ops);
+	double ave_dt = (double)(cur_us - last_us);
+	double ave_ops = (double)ts * MAX_BEN_ITEM / ave_dt * 1000000.0;
+	fprintf(stderr, "%d threads average WRITE: %.2f ops\n", ts, ave_ops);
 
-	LOG("\nClosing database");
+	fprintf(stderr, "Closing database\n");
+
 	pmemkv_close(db);
 
 	return 0;
