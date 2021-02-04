@@ -22,8 +22,8 @@
 
 #define LOG(msg) puts(msg)
 #define MAX_KEY_LEN 16
-#define MAX_VAL_LEN 1024
-#define MAX_BEN_ITEM 10000000
+#define MAX_VAL_LEN 128
+#define MAX_BEN_ITEM 4000000
 #define MAX_INTERVAL_TIMES 1000
 
 static const uint64_t SIZE = 16 * 1024UL * 1024UL * 1024UL;

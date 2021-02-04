@@ -179,6 +179,7 @@ void AepManager::RestoreHashMap(uint32_t start) {
                                          aep_v_size, key_hash_value);
         if (aep_checksum != checksum) {
             // data corrupt
+            free_list_[start][aep_b_size].push_back((block_base - aep_value_log_) / AEP_BLOCK_SIZE);
             block_base += (uint64_t)aep_b_size * AEP_BLOCK_SIZE;
             continue;
         }
@@ -201,6 +202,7 @@ void AepManager::RestoreHashMap(uint32_t start) {
                     decode_hash_meta(hash_meta, hash_b_off, hash_v_size,
                                      hash_b_size, hash_version);
                     if (hash_version < aep_version) {
+                        free_list_[start][hash_b_size].push_back(hash_b_off);
                         is_found = false;
                     }
 
@@ -238,6 +240,8 @@ void AepManager::RestoreHashMap(uint32_t start) {
                 memcpy_16(entry_base, key);
                 memcpy_8(entry_base + KEY_SIZE, &hash_meta);
                 hash_bucket_entries_[bucket] += 1;
+            } else {
+                free_list_[start][aep_b_size].push_back((block_base - aep_value_log_) / AEP_BLOCK_SIZE);
             }
         }
 
@@ -254,15 +258,15 @@ void AepManager::RestoreHashMap(uint32_t start) {
 
 Status AepManager::GetAEP(const Slice &key, std::string *value,
                           uint32_t key_hash_value) {
-    if (t_id < 0) {
-        t_id = threads_.fetch_add(1, std::memory_order_relaxed);
-        t_id %= THREAD_NUM;
-    }
+    // if (t_id < 0) {
+        // t_id = threads_.fetch_add(1, std::memory_order_relaxed);
+        // t_id %= THREAD_NUM;
+    // }
 #ifdef DO_STATS
-    if (t_id == 10 && get_cnt++ % 100000 == 0) {
-        stats.Print();
-    }
-    StopWatch sw1(stats.get_aep);
+    // if (t_id == 10 && get_cnt++ % 100000 == 0) {
+        // stats.Print();
+    // }
+    // StopWatch sw1(stats.get_aep);
 #endif
 
     uint32_t bucket = get_bucket_num(key_hash_value);
@@ -348,9 +352,11 @@ Status AepManager::GetAEP(const Slice &key, std::string *value,
         Status s;
         if (block_base == NULL) {
             s = NotFound;
+            // std::cout<<"thread "<<t_id<<" not found"<<std::endl;
             return s;
         } else {
             while (1) {
+                // std::cout<<"thread "<<t_id<<" read offset "<<block_base - pmem_base_<<std::endl;
                 value->assign(block_base + KEY_SIZE + AEP_META_SIZE, v_size);
                 std::atomic_thread_fence(std::memory_order_acquire);
                 uint64_t new_hash_meta;
@@ -470,11 +476,13 @@ Status AepManager::SetAEP(const Slice &key, const char *value,
 
         uint64_t aep_meta = encode_aep_meta(new_hash_v_size, new_hash_b_size,
                                             new_hash_version, checksum);
-        memcpy_6(block_base, &aep_meta);
-        memcpy_16(block_base + AEP_META_SIZE, key.data());
-        memcpy(block_base + AEP_META_SIZE + KEY_SIZE, value, new_hash_v_size);
-        pmem_persist(block_base, AEP_META_SIZE + KEY_SIZE + new_hash_v_size);
-        
+        thread_local char buff[102400];
+        memcpy_6(buff, &aep_meta);
+        memcpy_16(buff + AEP_META_SIZE, key.data());
+        memcpy(buff + AEP_META_SIZE + KEY_SIZE, value, new_hash_v_size);
+        pmem_memcpy(block_base, buff, AEP_META_SIZE + KEY_SIZE + new_hash_v_size, PMEM_F_MEM_NONTEMPORAL);
+        // pmem_flush(block_base, AEP_META_SIZE + KEY_SIZE + new_hash_v_size);
+        pmem_drain();
         memcpy_8(entry_base + KEY_SIZE, &new_hash_meta);
 
         if (!is_found) {
@@ -486,6 +494,7 @@ Status AepManager::SetAEP(const Slice &key, const char *value,
             free_list_[t_id][hash_b_size].push_back(hash_b_off);
         }
     }
+    // pmem_drain();
     return Ok;
 }
 

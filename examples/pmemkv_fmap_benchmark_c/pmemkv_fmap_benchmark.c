@@ -4,7 +4,8 @@
 /*
  * pmemkv_fmap_benchmark.c -- benchmark usage of fmap engine.
  */
-
+#define _GNU_SOURCE
+#include <sched.h>
 #include <assert.h>
 #include <libpmemkv.h>
 #include <stdio.h>
@@ -24,8 +25,9 @@
 
 #define LOG(msg) puts(msg)
 #define MAX_KEY_LEN 16
-#define MAX_VAL_LEN 1024
-#define MAX_BEN_ITEM 4000000
+#define MAX_VAL_LEN 64
+//#define MAX_BEN_ITEM 10000000
+#define MAX_BEN_ITEM 3000000
 #define MAX_INTERVAL_TIMES 10000
 
 static const uint64_t SIZE = 16 * 1024UL * 1024UL * 1024UL;
@@ -46,7 +48,7 @@ typedef struct thread_args {
 
 //#define INSTANT_OPS
 //static char *valpool;
-static char valpool[MAX_VAL_LEN * 4];
+static __thread char valpool[MAX_VAL_LEN * 4];
 static void *thread_ben(void *arg)
 {
 	int s;
@@ -55,6 +57,10 @@ static void *thread_ben(void *arg)
 	int tn = ((thread_args *)arg)->thread_num;
 
 	printf("Starting benchmarking...: thread #%d\n", tn);
+
+	for (int j = 0; j < MAX_VAL_LEN * 4; j++) {
+		valpool[j] = (char)((j+1) % 255);
+	}
 
 	char curkey[MAX_KEY_LEN];
 	char *curval = valpool;
@@ -67,10 +73,22 @@ static void *thread_ben(void *arg)
 	last_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
 #endif
 
+#if 0
+	cpu_set_t cpuset;
+	CPU_ZERO(&cpuset);
+	CPU_SET(tn > 23 ? tn + 48 : tn + 24, &cpuset);
+	pthread_t current_thread = pthread_self();
+	pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+#endif
+
+	srand(time(NULL));
 	for (int i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
-		//snprintf(curkey, sizeof(curkey), "key%12d:", i);
-		snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
-		s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
+		//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM * tn);
+		snprintf(curkey, sizeof(curkey), "key%12d:", i * tn);
+		//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM * tn);
+		//s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
+		s = pmemkv_put(db, curkey, strlen(curkey), curval + i % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
+		//s = pmemkv_put(db, curkey, strlen(curkey), "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz012345678901", MAX_VAL_LEN);
 		ASSERT(s == PMEMKV_STATUS_OK);
 #ifdef INSTANT_OPS
 		if (++j % MAX_INTERVAL_TIMES == 0) {
@@ -171,8 +189,8 @@ int main(int argc, char *argv[])
 		char curkey[MAX_KEY_LEN];
 		char *curval = valpool;
 		for (i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
-			//snprintf(curkey, sizeof(curkey), "key%12d:", i);
-			snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
+			snprintf(curkey, sizeof(curkey), "key%12d:", i);
+			//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
 
 			s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
 			ASSERT(s == PMEMKV_STATUS_OK);
