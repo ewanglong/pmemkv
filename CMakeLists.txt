@@ -109,6 +109,9 @@ if(ENGINE_FMAP)
 	list(APPEND SOURCE_FILES
 		src/engines/db.hpp
 		src/engines/Utils.hpp
+		src/engines/Utils.cpp
+		src/engines/Logger.hpp
+		src/engines/Logger.cpp
 		src/engines/AepManager.hpp
 		src/engines/AepManager.cpp
 		src/engines/fmap.h

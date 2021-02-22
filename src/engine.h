@@ -54,6 +54,7 @@ public:
 	virtual status get(string_view key, get_v_callback *callback, void *arg) = 0;
 	virtual status put(string_view key, string_view value) = 0;
 	virtual status remove(string_view key) = 0;
+	virtual status snapshot(const char *path, bool sst_process);
 	virtual status defrag(double start_percent, double amount_percent);
 
 	virtual internal::transaction *begin_tx();

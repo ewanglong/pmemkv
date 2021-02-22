@@ -34,6 +34,7 @@ LIBPMEMKV_1.0 {
 		pmemkv_count_equal_above;
 		pmemkv_count_equal_below;
 		pmemkv_defrag;
+		pmemkv_snapshot;
 		pmemkv_errormsg;
 		pmemkv_exists;
 		pmemkv_get;

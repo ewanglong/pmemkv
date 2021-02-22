@@ -38,7 +38,7 @@ public:
 
 	std::string name() final;
 
-	void Init(const std::string &name);
+	void Init(const std::string &pmem_name, char *sst_name);
 
 	status get(string_view key, get_v_callback *callback, void *arg) final;
 
@@ -46,8 +46,11 @@ public:
 
 	status remove(string_view key) final;
 
+    status snapshot(const char *path, bool sst_process) final;
+
 private:
 	bool cfg_by_path = false;
+    bool sst_active_ = false;
 	
 	AepManager aep_;
 	std::string file_name_;
@@ -55,6 +58,9 @@ private:
 	char *pmem_base_;
 	size_t mapped_len_;
 	int is_pmem_;
+
+	char *sst_base_;
+    FILE *sst_fp_;
 };
 
 } /* namespace kv */

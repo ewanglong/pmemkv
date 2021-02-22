@@ -649,6 +649,16 @@ int pmemkv_defrag(pmemkv_db *db, double start_percent, double amount_percent)
 	});
 }
 
+int pmemkv_snapshot(pmemkv_db *db, const char *path, bool sst_process)
+{
+	if (!db)
+		return PMEMKV_STATUS_INVALID_ARGUMENT;
+
+	return catch_and_return_status(__func__, [&] {
+		return db_to_internal(db)->snapshot(path, sst_process);
+	});
+}
+
 int pmemkv_iterator_new(pmemkv_db *db, pmemkv_iterator **it)
 {
 	if (!db || !it)

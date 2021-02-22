@@ -10,21 +10,21 @@
 #define XXH_INLINE_ALL
 #include "xxhash.h"
 
-// #define DO_LOG
+//#define DO_LOG
 // #define DO_STATS
 
 // PMEM_RELATIVE
 //#define PMEM_SIZE (256LL * 1024 * 1024 * 1024)
-#define PMEM_SIZE (240LL * 1024 * 1024 * 1024)
-//#define PMEM_SIZE (4LL * 1024 * 1024 * 1024)
+//#define PMEM_SIZE (240LL * 1024 * 1024 * 1024)
+#define PMEM_SIZE (4LL * 1024 * 1024 * 1024)
 
-#define THREAD_NUM 16
+#define THREAD_NUM 1
 
 #define KEY_SIZE 16
 #define SHARD_NUM 2048
 
 #define HASH_TOTAL_BUCKETS (1 << 26)
-//#define HASH_TOTAL_BUCKETS (1 << 23)
+//#define HASH_TOTAL_BUCKETS (1 << 22)
 //#define HASH_BUCKET_SIZE (DRAM_HASH_SIZE / HASH_TOTAL_BUCKETS)
 #define HASH_BUCKET_SIZE 128
 
@@ -43,7 +43,6 @@
 
 #define AEP_META_SIZE \
     6  // high | checksum(16) | v_size(16) | b_size(8) | version(8) | low
-#define AEP_GLOBAL_VER 8 // high | AEP_META_SIZE | AEP_GLOBAL_VER | low
 #define AEP_BLOCK_SIZE 64
 #define AEP_FREE_LIST_SLOT_NUM (1024 / AEP_BLOCK_SIZE + 2)
 #define AEP_MIN_BLOCK_SIZE 1

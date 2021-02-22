@@ -91,8 +91,10 @@ inline void decode_hash_meta(uint64_t meta, uint32_t &b_off, uint16_t &v_size,
     b_off = meta;
 }
 
-void AepManager::Init(char *pmem_base) {
+void AepManager::Init(char *pmem_base, char *sst_base, FILE *sst_fp) {
   pmem_base_ = pmem_base;
+  sst_base_ = sst_base;
+  sst_fp_ = sst_fp;
 
   // init hash
   dram_hash_map_ =
@@ -104,6 +106,12 @@ void AepManager::Init(char *pmem_base) {
   aep_value_log_ = pmem_base_;
 
   for (auto &fl : free_list_) {
+    for (int i = AEP_MIN_BLOCK_SIZE; i < AEP_FREE_LIST_SLOT_NUM + 1; i++) {
+      fl[i].reserve(10240);
+    }
+  }
+
+  for (auto &fl : pending_list_) {
     for (int i = AEP_MIN_BLOCK_SIZE; i < AEP_FREE_LIST_SLOT_NUM + 1; i++) {
       fl[i].reserve(10240);
     }
@@ -122,16 +130,16 @@ void AepManager::Init(char *pmem_base) {
       ths_init.emplace_back([=]() {
         // init pmem
         memset_movnt_sse2_clflushopt(aep_value_log_ +
-                                         (uint64_t)i * PMEM_SIZE / THREAD_NUM,
+                                         (long long unsigned int)i * PMEM_SIZE / THREAD_NUM,
                                      0, PMEM_SIZE / THREAD_NUM);
 
         // init hashmap
-        memset(dram_hash_map_ + (uint64_t)i * DRAM_HASH_SIZE / THREAD_NUM, 0,
+        memset(dram_hash_map_ + (long long unsigned int)i * DRAM_HASH_SIZE / THREAD_NUM, 0,
                DRAM_HASH_SIZE / THREAD_NUM);
 
         // init some spare space
         memset(dram_hash_map_ + DRAM_HASH_SIZE +
-                   (uint64_t)i * DRAM_SPARE_SIZE / THREAD_NUM,
+                   (long long unsigned int)i * DRAM_SPARE_SIZE / THREAD_NUM,
                0, 2LL * 1024 * 1024 * 1024 / THREAD_NUM);
       });
     }
@@ -174,6 +182,9 @@ void AepManager::RestoreHashMap(uint32_t start) {
         decode_aep_meta(aep_meta, aep_v_size, aep_b_size, aep_version,
                         aep_checksum);
         memcpy_16(key, block_base + AEP_META_SIZE);
+
+		//fprintf(stderr, "restore key: %s\n", key);
+
         key_hash_value = hash_key(key);
         uint16_t checksum = get_checksum(block_base + AEP_META_SIZE + KEY_SIZE,
                                          aep_v_size, key_hash_value);
@@ -251,6 +262,9 @@ void AepManager::RestoreHashMap(uint32_t start) {
         (block_base - (aep_value_log_ + PMEM_SIZE / THREAD_NUM * (uint64_t)start)) /
         AEP_BLOCK_SIZE;
     restored_.fetch_add(cnt);
+
+	fprintf(stderr, "restore cnt %d %d\n", start, cnt);
+
 #ifdef DO_LOG
     GlobalLogger.Print("restore cnt %d %d\n", start, cnt);
 #endif
@@ -489,13 +503,104 @@ Status AepManager::SetAEP(const Slice &key, const char *value,
             // add entry
             memcpy_16(entry_base, key.data());
             hash_bucket_entries_[bucket]++;
-        } else {
+        } else if (!sst_active_){
             // update free_list
             free_list_[t_id][hash_b_size].push_back(hash_b_off);
+        } else {
+            pending_list_[t_id][hash_b_size].push_back(hash_b_off);
         }
     }
     // pmem_drain();
     return Ok;
+}
+
+Status AepManager::DoSnapShot(char *sst_base, FILE *sst_fp) {
+    uint64_t hash_meta;
+    uint32_t hash_b_off;
+    uint16_t hash_v_size;
+    uint8_t hash_b_size;
+    uint8_t hash_version;
+
+    uint64_t bucket;
+    uint32_t entries;
+
+    char *bucket_base;
+    char *entry_base;
+
+    char * block_base = aep_value_log_;
+    char *sst_block_iter = sst_base;
+
+    FILE *fp;
+    if (sst_fp != NULL) fp = sst_fp;
+    else fp = sst_fp_;
+    uint32_t sst_cnt = 0;
+
+    sst_active_ = true;
+    for (bucket = 0; bucket < HASH_TOTAL_BUCKETS; bucket++) {
+        bucket_base = dram_hash_map_ + (uint64_t)bucket * HASH_BUCKET_SIZE;
+        entry_base = bucket_base;
+        entries = hash_bucket_entries_[bucket];
+
+        for (uint32_t i = 0; i < entries; i++) {
+            memcpy_8(&hash_meta, entry_base + KEY_SIZE);
+            decode_hash_meta(hash_meta, hash_b_off, hash_v_size,
+                             hash_b_size, hash_version);
+
+#if 0
+            pmem_memcpy(sst_block_iter, block_base + (uint64_t)hash_b_off * AEP_BLOCK_SIZE,
+                        hash_b_size * AEP_BLOCK_SIZE, PMEM_F_MEM_NONTEMPORAL);
+            sst_block_iter += hash_b_size * AEP_BLOCK_SIZE;
+#else
+            size_t retval = fwrite(block_base + (uint64_t)hash_b_off * AEP_BLOCK_SIZE,
+                                    hash_b_size * AEP_BLOCK_SIZE, 1, fp);
+#endif
+            sst_cnt += 1;
+            if (i == entries - 1) break;
+
+            entry_base += HASH_ENTRY_SIZE;
+            if ((i + 1) % HASH_BUCKET_ENTRY_NUM == 0) {
+                // next bucket
+                uint32_t s_off;
+                memcpy_4(&s_off, bucket_base + HASH_BUCKET_SIZE - 4);
+                bucket_base =
+                    dram_spare_ + (uint64_t)s_off * HASH_BUCKET_SIZE;
+
+                _mm_prefetch(bucket_base, _MM_HINT_T0);
+                _mm_prefetch(bucket_base + 64, _MM_HINT_T0);
+
+                entry_base = bucket_base;
+            }
+        }
+    }
+
+#if 1
+    fflush(fp);
+    fsync(fileno(fp));
+    fclose(fp);
+#endif
+
+#ifdef DO_LOG
+    GlobalLogger.Print("snapshot cnt %d\n", sst_cnt);
+#endif
+}
+
+Status AepManager::SetSstFlg(bool flag) {
+    sst_active_ = flag;
+    uint32_t b_off = 0;
+
+    if (sst_active_ == false) {
+        for (uint8_t i = AEP_MIN_BLOCK_SIZE; i < AEP_FREE_LIST_SLOT_NUM; i++) {
+            if (pending_list_[t_id][i].size() != 0) {
+                b_off = *pending_list_[t_id][i].rbegin();
+
+                free_list_[t_id][i].push_back(b_off);
+
+                pending_list_[t_id][i].pop_back();
+
+                break;
+            }
+        }
+    }
 }
 
 uint32_t AepManager::SetValueOffset(uint16_t v_size, uint8_t &b_size) {

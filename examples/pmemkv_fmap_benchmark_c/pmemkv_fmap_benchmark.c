@@ -4,10 +4,14 @@
 /*
  * pmemkv_fmap_benchmark.c -- benchmark usage of fmap engine.
  */
-#define _GNU_SOURCE
-#include <sched.h>
+//#define _GNU_SOURCE
+//#include <sched.h>
+//#undef _GNU_SOURCE
+
 #include <assert.h>
+//#define __cplusplus
 #include <libpmemkv.h>
+//#undef __cplusplus
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +19,9 @@
 #include <sys/time.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 #define ASSERT(expr)                                                                     \
 	do {                                                                             \
@@ -25,11 +32,14 @@
 
 #define LOG(msg) puts(msg)
 #define MAX_KEY_LEN 16
-#define MAX_VAL_LEN 64
-//#define MAX_BEN_ITEM 10000000
-#define MAX_BEN_ITEM 3000000
-#define MAX_INTERVAL_TIMES 10000
+#define MAX_VAL_LEN 128
+#define MAX_BEN_ITEM 10000000
+//#define MAX_BEN_ITEM 3000000
+#define MAX_INTERVAL_TIMES 100000
 
+static bool sst_active = false;
+static bool sst_trigger = false;
+static pmemkv_db *db = NULL;
 static const uint64_t SIZE = 16 * 1024UL * 1024UL * 1024UL;
 
 int get_kv_callback(const char *k, size_t kb, const char *value, size_t value_bytes,
@@ -46,9 +56,11 @@ typedef struct thread_args {
 	char *val_pool;
 } thread_args;
 
-//#define INSTANT_OPS
+#define INSTANT_OPS
 //static char *valpool;
-static __thread char valpool[MAX_VAL_LEN * 4];
+//static char valpool[MAX_VAL_LEN * 4];
+//static __thread char valpool[MAX_VAL_LEN * 4];
+static _Thread_local char valpool[MAX_VAL_LEN * 4];
 static void *thread_ben(void *arg)
 {
 	int s;
@@ -83,9 +95,9 @@ static void *thread_ben(void *arg)
 
 	srand(time(NULL));
 	for (int i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
-		//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM * tn);
-		snprintf(curkey, sizeof(curkey), "key%12d:", i * tn);
-		//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM * tn);
+		//snprintf(curkey, sizeof(curkey), "key%012d:", rand() % MAX_BEN_ITEM * tn);
+		snprintf(curkey, sizeof(curkey), "key%012d:", i * tn);
+		//snprintf(curkey, sizeof(curkey), "key%012d:", rand() % MAX_BEN_ITEM * tn);
 		//s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
 		s = pmemkv_put(db, curkey, strlen(curkey), curval + i % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
 		//s = pmemkv_put(db, curkey, strlen(curkey), "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz012345678901", MAX_VAL_LEN);
@@ -104,6 +116,43 @@ static void *thread_ben(void *arg)
 	}
 
 	return NULL;
+}
+
+void* create_shared_memory(size_t size) {
+	int protection = PROT_READ | PROT_WRITE;
+
+	int visibility = MAP_SHARED | MAP_ANONYMOUS;
+
+	return mmap(NULL, size, protection, visibility, -1, 0);
+}
+
+void *do_snapshot(char *sst_path) {
+	int childpid;
+	void *shmem = create_shared_memory(64);
+	char done_msg[] = "sst_done";
+
+#if 1
+	struct timeval now;
+	long long last_us, cur_us;
+	gettimeofday(&now, NULL);
+	last_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
+#endif
+
+	if ((childpid = fork()) == 0) {
+		/* Child */
+		pmemkv_snapshot(db, sst_path, true);
+		memcpy(shmem, done_msg, sizeof(done_msg));
+		exit(0);
+	} else {
+#if 1
+		gettimeofday(&now, NULL);
+		cur_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
+		fprintf(stderr, "fork() consumed %d microseconds\n", (cur_us - last_us)/1000);
+#endif
+		/* in parent process, set sst_active_ flag ON */
+		pmemkv_snapshot(db, NULL, false);
+		return shmem;
+	}
 }
 
 int main(int argc, char *argv[])
@@ -129,11 +178,10 @@ int main(int argc, char *argv[])
 
 	s = pmemkv_config_put_size(cfg, SIZE);
 	ASSERT(s == PMEMKV_STATUS_OK);
-	s = pmemkv_config_put_force_create(cfg, true);
+	s = pmemkv_config_put_force_create(cfg, 1/*true*/);
 	ASSERT(s == PMEMKV_STATUS_OK);
 
 	fprintf(stderr, "Opening pmemkv database with 'fmap' engine\n");
-	pmemkv_db *db = NULL;
 	s = pmemkv_open("fmap", cfg, &db);
 	ASSERT(s == PMEMKV_STATUS_OK);
 	ASSERT(db != NULL);
@@ -188,11 +236,41 @@ int main(int argc, char *argv[])
 
 		char curkey[MAX_KEY_LEN];
 		char *curval = valpool;
+
+#if 0
+		char sst_path[50];
+		//sprintf(sst_path, "%s-sst", argv[1]);
+		char cwd[128];
+		char *cwdp = getcwd(cwd,128);
+		sprintf(sst_path, "%s/pmemkv.sst", cwdp);
+#endif
+
 		for (i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
-			snprintf(curkey, sizeof(curkey), "key%12d:", i);
-			//snprintf(curkey, sizeof(curkey), "key%12d:", rand() % MAX_BEN_ITEM);
+#if 1
+			void *shmem;
+			char done_msg[] = "sst_done";
+
+			if (i == MAX_BEN_ITEM / 2 || sst_trigger == true) {
+				//shmem = do_snapshot(sst_path);
+				shmem = do_snapshot(NULL);
+				sst_trigger = false;
+				sst_active = true;
+				fprintf(stderr, "snapshot is triggered!\n");
+			}
+
+			if (sst_active == true && !memcmp(shmem, done_msg, sizeof(done_msg))) {
+				/* in parent process, set sst_active_ flag OFF */
+				pmemkv_snapshot(db, NULL, false);
+				sst_active = false;
+				fprintf(stderr, "snapshot is done by child process!\n");
+			}
+#endif
+
+			snprintf(curkey, sizeof(curkey), "key%012d:", i);
+			//snprintf(curkey, sizeof(curkey), "key%012d:", rand() % MAX_BEN_ITEM);
 
 			s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
+			//s = pmemkv_put(db, curkey, strlen(curkey), curval + i % (MAX_VAL_LEN * 3), MAX_VAL_LEN);
 			ASSERT(s == PMEMKV_STATUS_OK);
 #ifdef INSTANT_OPS
 			if (++j % MAX_INTERVAL_TIMES == 0) {

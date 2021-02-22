@@ -18,13 +18,16 @@ public:
     AepManager();
     ~AepManager();
 
-    void Init(char *pmem_base);
+    void Init(char *pmem_base, char *sst_base, FILE *sst_fp);
 
     // Get/Set From AEP
     Status GetAEP(const Slice &key, std::string *value,
                   uint32_t key_hash_value);
     Status SetAEP(const Slice &key, const char *value, uint16_t new_hash_v_size,
                   uint32_t key_hash_value, uint64_t checksum);
+
+    Status DoSnapShot(char *sst_base, FILE *fp);
+    Status SetSstFlg(bool flag);
 
     uint32_t aep_value_log_head_[THREAD_NUM];
     uint32_t spare_head_[THREAD_NUM];
@@ -50,11 +53,16 @@ private:
 
     std::vector<uint32_t> free_list_[THREAD_NUM][AEP_FREE_LIST_SLOT_NUM];
 
+    std::vector<uint32_t> pending_list_[THREAD_NUM][AEP_FREE_LIST_SLOT_NUM];
+
     struct HashCache {
         char *entry_base = NULL;
     };
 
     HashCache hash_cache_[SLOT_NUM];
     SpinMutex spins_[SLOT_NUM];
+    bool sst_active_ = false;
+    char *sst_base_;
+    FILE *sst_fp_;
     // cache
 };

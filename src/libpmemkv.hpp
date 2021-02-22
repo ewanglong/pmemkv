@@ -563,6 +563,7 @@ public:
 	status put(string_view key, string_view value) noexcept;
 	status remove(string_view key) noexcept;
 	status defrag(double start_percent = 0, double amount_percent = 100);
+    status snapshot(const char *path, bool sst_process);
 
 	result<tx> tx_begin() noexcept;
 
@@ -2199,6 +2200,12 @@ inline status db::defrag(double start_percent, double amount_percent)
 {
 	return static_cast<status>(
 		pmemkv_defrag(this->db_.get(), start_percent, amount_percent));
+}
+
+inline status db::snapshot(const char *path, bool sst_process)
+{
+	return static_cast<status>(
+		pmemkv_snapshot(this->db_.get(), path, sst_process));
 }
 
 /**
