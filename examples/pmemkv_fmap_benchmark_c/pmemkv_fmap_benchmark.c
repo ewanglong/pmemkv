@@ -33,8 +33,8 @@
 #define LOG(msg) puts(msg)
 #define MAX_KEY_LEN 16
 #define MAX_VAL_LEN 128
-#define MAX_BEN_ITEM 10000000
-//#define MAX_BEN_ITEM 3000000
+//#define MAX_BEN_ITEM 10000000
+#define MAX_BEN_ITEM 3000000
 #define MAX_INTERVAL_TIMES 100000
 
 static bool sst_active = false;
@@ -126,9 +126,9 @@ void* create_shared_memory(size_t size) {
 	return mmap(NULL, size, protection, visibility, -1, 0);
 }
 
-void *do_snapshot(char *sst_path) {
+void *do_snapshot(char *sst_path, void *shmem) {
 	int childpid;
-	void *shmem = create_shared_memory(64);
+	//void *shmem = create_shared_memory(64);
 	char done_msg[] = "sst_done";
 
 #if 1
@@ -152,6 +152,47 @@ void *do_snapshot(char *sst_path) {
 		/* in parent process, set sst_active_ flag ON */
 		pmemkv_snapshot(db, NULL, false);
 		return shmem;
+	}
+}
+
+typedef struct tri_td_args {
+	char *sst_path;
+	void *shmem;
+} tri_td_args;
+
+static void *trigger_thread(void *arg)
+{
+	char *sst_path = ((tri_td_args *)arg)->sst_path;
+	void *shmem = ((tri_td_args *)arg)->shmem;
+
+	int childpid;
+	char done_msg[] = "sst_done";
+
+#if 1
+	struct timeval now;
+	long long last_us, cur_us;
+	gettimeofday(&now, NULL);
+	last_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
+#endif
+
+	/* since the launcher thread will be blocked by vfork(), put it in advance here for
+		set sst_active_ flag ON */
+	pmemkv_snapshot(db, NULL, false);
+
+	if ((childpid = vfork()) == 0) {
+		/* Child */
+		pmemkv_snapshot(db, sst_path, true);
+		memcpy(shmem, done_msg, sizeof(done_msg));
+		exit(0);
+	} else {
+#if 1
+		gettimeofday(&now, NULL);
+		cur_us = (long long)(now.tv_sec * 1000000 + now.tv_usec);
+		fprintf(stderr, "fork() consumed %d microseconds\n", (cur_us - last_us)/1000);
+#endif
+		/* in parent process, set sst_active_ flag ON */
+		//pmemkv_snapshot(db, NULL, false);
+		return NULL;
 	}
 }
 
@@ -237,22 +278,39 @@ int main(int argc, char *argv[])
 		char curkey[MAX_KEY_LEN];
 		char *curval = valpool;
 
-#if 0
-		char sst_path[50];
+#if 1
+		char sst_path[128];
 		//sprintf(sst_path, "%s-sst", argv[1]);
 		char cwd[128];
 		char *cwdp = getcwd(cwd,128);
-		sprintf(sst_path, "%s/pmemkv.sst", cwdp);
+		sprintf(sst_path, "%s/pmemkv-%llu.sst", cwdp, last_inst_us);
 #endif
+
+		void *shmem = create_shared_memory(64);
+		pthread_t tri_td;	
+		tri_td_args tri_td_args;
 
 		for (i = 0, j = 0; i < MAX_BEN_ITEM; i++) {
 #if 1
-			void *shmem;
+			//void *shmem;
 			char done_msg[] = "sst_done";
 
 			if (i == MAX_BEN_ITEM / 2 || sst_trigger == true) {
 				//shmem = do_snapshot(sst_path);
-				shmem = do_snapshot(NULL);
+				//shmem = do_snapshot(NULL);
+#if 1
+				do_snapshot(sst_path, shmem);
+#else
+				tri_td_args.sst_path = sst_path;
+				tri_td_args.shmem = shmem;
+				if ((ret = pthread_create(&tri_td, NULL, trigger_thread,
+						&tri_td_args)) != 0) {
+					fprintf(stderr, "Cannot start the trigger thread for snapshot: %s\n",
+						strerror(ret));
+					return ret;
+				}
+#endif
+
 				sst_trigger = false;
 				sst_active = true;
 				fprintf(stderr, "snapshot is triggered!\n");
@@ -263,10 +321,19 @@ int main(int argc, char *argv[])
 				pmemkv_snapshot(db, NULL, false);
 				sst_active = false;
 				fprintf(stderr, "snapshot is done by child process!\n");
+				//pthread_join(tri_td, NULL);
 			}
 #endif
 
+#if 1
 			snprintf(curkey, sizeof(curkey), "key%012d:", i);
+#else
+			if (sst_active == true) {
+				snprintf(curkey, sizeof(curkey), "key%012d:", 100000);
+			} else {
+				snprintf(curkey, sizeof(curkey), "key%012d:", i);
+			}
+#endif
 			//snprintf(curkey, sizeof(curkey), "key%012d:", rand() % MAX_BEN_ITEM);
 
 			s = pmemkv_put(db, curkey, strlen(curkey), curval + rand() % (MAX_VAL_LEN * 3), MAX_VAL_LEN);

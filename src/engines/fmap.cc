@@ -19,15 +19,7 @@ fmap::fmap(std::unique_ptr<internal::config> cfg)
 		throw internal::invalid_argument(
 			"Config does not contain item with key: \"path\"");
 
-#if 0
-	this->Init((std::string)path, nullptr);
-#else
-	char c_path[128];
-	char cwd[128];
-	char *cwdp = getcwd(cwd,128);
-	sprintf(c_path, "%s/pmemkv.sst", cwdp);
-	this->Init((std::string)path, c_path);
-#endif
+	this->Init((std::string)path);
 }
 
 fmap::~fmap() { pmem_unmap(pmem_base_, mapped_len_); }
@@ -37,7 +29,7 @@ std::string fmap::name()
 	return "fmap";
 }
 
-void fmap::Init(const std::string &pmem_name, char *sst_name) {
+void fmap::Init(const std::string &pmem_name) {
 	file_name_ = pmem_name;
 	if ((pmem_base_ = (char *)pmem_map_file(file_name_.c_str(), PMEM_SIZE,
 											PMEM_FILE_CREATE, 0666,
@@ -45,27 +37,8 @@ void fmap::Init(const std::string &pmem_name, char *sst_name) {
 		perror("Pmem map file failed");
 		exit(1);
 	}
-#if 0
-    if (sst_name != NULL) {
-        if ((sst_base_ = (char *)pmem_map_file(sst_name.c_str(), PMEM_SIZE,
-                    PMEM_FILE_CREATE | PMEM_FILE_SPARSE, 0666,
-                    //PMEM_FILE_CREATE, 0666,
-                    NULL, NULL)) == NULL) {
-            perror("Pmem snapshot map file failed");
-            exit(1);
-        }
-    } else sst_base_ = NULL;
 
-    sst_fp_ = NULL;
-#else
-    if (sst_name != NULL) {
-        sst_fp_ = fopen(sst_name,"w");
-    } else sst_fp_ = NULL;
-
-    sst_base_ = NULL;
-#endif
-
-    aep_.Init(pmem_base_, sst_base_, sst_fp_);
+    aep_.Init(pmem_base_);
 
 	// GlobalLogger.Print("is pmem %d \n", is_pmem_);
 }
@@ -106,26 +79,7 @@ status fmap::snapshot(const char *path, bool sst_process)
 {
     if (sst_process) {
         sst_active_ = true;
-#if 0
-        if (path != NULL) {
-        	if ((sst_base_ = (char *)pmem_map_file(path, PMEM_SIZE,
-        				PMEM_FILE_CREATE | PMEM_FILE_SPARSE, 0666,
-        				//PMEM_FILE_CREATE, 0666,
-        				NULL, NULL)) == NULL) {
-        		perror("Pmem snapshot map file failed");
-        		exit(1);
-        	}
-        } else sst_base_ = NULL;
-
-        sst_fp_ = NULL;
-#else
-        if (path != NULL) {
-            sst_fp_ = fopen(path,"w");
-        } else sst_fp_ = NULL;
-
-        sst_base_ = NULL;
-#endif
-        aep_.DoSnapShot(sst_base_, sst_fp_);
+        aep_.DoSnapShot(path);
     } else if (sst_active_ == false) {
         sst_active_ = true;
         aep_.SetSstFlg(true);

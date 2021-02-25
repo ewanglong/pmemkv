@@ -38,7 +38,7 @@ public:
 
 	std::string name() final;
 
-	void Init(const std::string &pmem_name, char *sst_name);
+	void Init(const std::string &pmem_name);
 
 	status get(string_view key, get_v_callback *callback, void *arg) final;
 
@@ -58,9 +58,6 @@ private:
 	char *pmem_base_;
 	size_t mapped_len_;
 	int is_pmem_;
-
-	char *sst_base_;
-    FILE *sst_fp_;
 };
 
 } /* namespace kv */

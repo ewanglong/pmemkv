@@ -91,10 +91,8 @@ inline void decode_hash_meta(uint64_t meta, uint32_t &b_off, uint16_t &v_size,
     b_off = meta;
 }
 
-void AepManager::Init(char *pmem_base, char *sst_base, FILE *sst_fp) {
+void AepManager::Init(char *pmem_base) {
   pmem_base_ = pmem_base;
-  sst_base_ = sst_base;
-  sst_fp_ = sst_fp;
 
   // init hash
   dram_hash_map_ =
@@ -514,7 +512,7 @@ Status AepManager::SetAEP(const Slice &key, const char *value,
     return Ok;
 }
 
-Status AepManager::DoSnapShot(char *sst_base, FILE *sst_fp) {
+Status AepManager::DoSnapShot(const char *path) {
     uint64_t hash_meta;
     uint32_t hash_b_off;
     uint16_t hash_v_size;
@@ -528,11 +526,8 @@ Status AepManager::DoSnapShot(char *sst_base, FILE *sst_fp) {
     char *entry_base;
 
     char * block_base = aep_value_log_;
-    char *sst_block_iter = sst_base;
 
-    FILE *fp;
-    if (sst_fp != NULL) fp = sst_fp;
-    else fp = sst_fp_;
+    FILE *fp = fopen(path,"w");
     uint32_t sst_cnt = 0;
 
     sst_active_ = true;
